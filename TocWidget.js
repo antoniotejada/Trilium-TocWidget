@@ -1,5 +1,5 @@
 /**
- * Table of contents widget 
+ * Table of contents widget
  * (c) Antonio Tejada 2022
  *
  * For text notes, it will place a table of content on the left pane, below the
@@ -10,6 +10,17 @@
  *
  * This is enabled by default for all text notes, but can be disabled by adding
  * the tag noTocWidget to a text note.
+ *
+ * By design there's no support for non-sensical or malformed constructs:
+ * - headings inside elements (eg  Trilium allows headings inside tables, but
+ *   not inside lists)
+ * - nested headings when using raw HTML <H2><H3></H3></H2> 
+ * - malformed headings when using raw HTML <H2></H3></H2><H3> 
+ * - etc.
+ *
+ * In those cases the generated TOC may be incorrect or the navigation may lead
+ * to the wrong heading (although what "right" means in those cases is not
+ * clear), but it won't crash.
  *
  * See https://github.com/zadam/trilium/discussions/2799 for discussions
  */
@@ -29,8 +40,52 @@ function info(s) {
     console.info("TocWidget: " + s);
 }
 
+function warn(s) {
+    console.warn("TocWidget: " + s);
+}
+
+function assert(e, msg) {
+    console.assert(e, msg);
+}
+
 function debugbreak() {
     debugger;
+}
+
+/**
+* Find a heading node in the parent's children given its index.
+*
+* @param {Element} parent Parent node to find a headingIndex'th in.
+* @param {uint} headingIndex Index for the heading
+* @returns {Element|null} Heading node with the given index, null couldn't be
+*          found (ie malformed like nested headings, etc)
+*/
+function findHeadingNodeByIndex(parent, headingIndex) {
+    dbg("Finding headingIndex " + headingIndex + " in parent " + parent.name);
+    let headingNode = null;
+    for (let i = 0, child = null; i < parent.childCount; ++i) {
+        child = parent.getChild(i);
+
+        dbg("Inspecting node: " + child.name +
+            ", attrs: " + Array.from(child.getAttributes()) +
+            ", path: " + child.getPath());
+
+        // Headings appear as flattened top level children in the CKEditor
+        // document named as "heading" plus the level, eg "heading2",
+        // "heading3", "heading2", etc and not nested wrt the heading level. If
+        // a heading node is found, decrement the headingIndex until zero is
+        // reached
+        if (child.name.startsWith("heading")) {
+            if (headingIndex == 0) {
+                dbg("Found heading node " + child.name);
+                headingNode = child;
+                break;
+            }
+            headingIndex--;
+        }
+    }
+
+    return headingNode;
 }
 
 class TocWidget extends api.NoteContextAwareWidget {
@@ -87,9 +142,8 @@ class TocWidget extends api.NoteContextAwareWidget {
         // Note heading 2 is the first level Trilium makes available to the note
         let curLevel = 2;
         let $ols = [$toc];
-        let m;
-        let headingIndex = 0;
-        while ((m = reHeadingTags.exec(html)) !== null) {
+        for (let m = null, headingIndex = 0; ((m = reHeadingTags.exec(html)) !== null);
+            ++headingIndex) {
             //
             // Nest/unnest whatever necessary number of ordered lists
             //
@@ -108,85 +162,71 @@ class TocWidget extends api.NoteContextAwareWidget {
                     $ols.pop();
                 }
             }
+            curLevel = newLevel;
 
             //
             // Create the list item and setup the click callback
             //
             let $li = $('<li style="cursor:pointer">' + m[2] + '</li>');
-            // Capture the current iteration value for the callback function
-            // to use it
-            let capturedHeadingIndex = headingIndex;
             $li.on("click", function () {
                 dbg("clicked");
                 api.getActiveTabTextEditor(textEditor => {
-                    // Headings appear as flattened top level children in the
-                    // CKEditor document named as "heading" plus the level, eg
-                    // "heading2", "heading3", "heading2", etc and not nested
-                    // wrt the heading level. Just count headings sequentially
-                    // to find the node we need to go to
                     const model = textEditor.model;
                     const doc = model.document;
                     const root = doc.getRoot();
-                    let headingNode = null;
-                    let headingNodeCount = 0;
-                    for (let i = 0, child = null; ((i < root.childCount) &&
-                        (headingNodeCount <= capturedHeadingIndex)); ++i) {
-                        child = root.getChild(i);
-                        if (child.name.startsWith("heading")) {
-                            headingNodeCount++;
-                            headingNode = child;
-                        }
 
-                        dbg(child);
-                        dbg(child.getPath());
+                    let headingNode = findHeadingNodeByIndex(root, headingIndex);
+
+                    // headingNode could be null if the html was malformed or
+                    // with headings inside elements, just ignore and don't
+                    // navigate (note that the TOC rendering and other TOC
+                    // entries' navigation could be wrong too)
+                    if (headingNode != null) {
+                        // Setting the selection alone doesn't scroll to the caret,
+                        // needs to be done explicitly and outside of the writer
+                        // change callback so the scroll is guaranteed to happen 
+                        // after the selection is updated.
+
+                        // In addition, scrolling to a caret later in the document
+                        // (ie "forward scrolls"), only scrolls barely enough to
+                        // place the caret at the bottom of the screen, which is a
+                        // usability issue, you would like the caret to be placed at
+                        // the top or center of the screen.
+
+                        // To work around that issue, first scroll to the end of the
+                        // document, then scroll to the desired point. This causes
+                        // all the scrolls to be "backward scrolls" no matter the
+                        // current caret position, which places the caret at the top
+                        // of the screen.
+
+                        // XXX This could be fixed in another way by using the
+                        //     underlying CKEditor5 scrollViewportToShowTarget,
+                        //     which allows to provide a larger "viewportOffset",
+                        //     but that has coding complications (requires calling
+                        //     an internal CKEditor utils funcion and passing an
+                        //     HTML element, not a CKEditor node, and CKEditor5
+                        //     doesn't seem to have a straightforward way to convert
+                        //     a node to an HTML element? (in CKEditor4 this was
+                        //     done with $(node.$) )
+
+                        // Scroll to the end of the note to guarantee the next
+                        // scroll is a backwards scroll that places the caret at the
+                        // top of the screen
+                        model.change(writer => {
+                            writer.setSelection(root.getChild(root.childCount - 1), 0);
+                        });
+                        textEditor.editing.view.scrollToTheSelection();
+                        // Backwards scroll to the heading
+                        model.change(writer => {
+                            writer.setSelection(headingNode, 0);
+                        });
+                        textEditor.editing.view.scrollToTheSelection();
+                    } else {
+                        warn("Malformed HTML, unable to navigate, TOC rendering is probably wrong too.");
                     }
-                    dbg("Found heading node " + headingNode);
-
-                    // Setting the selection alone doesn't scroll to the caret,
-                    // needs to be done explicitly and outside of the writer
-                    // change callback so the scroll is guaranteed to happen 
-                    // after the selection is updated.
-
-                    // In addition, scrolling to a caret later in the document
-                    // (ie "forward scrolls"), only scrolls barely enough to
-                    // place the caret at the bottom of the screen, which is a
-                    // usability issue, you would like the caret to be placed at
-                    // the top or center of the screen.
-
-                    // To work around that issue, first scroll to the end of the
-                    // document, then scroll to the desired point. This causes
-                    // all the scrolls to be "backward scrolls" no matter the
-                    // current caret position, which places the caret at the top
-                    // of the screen.
-
-                    // XXX This could be fixed in another way by using the
-                    //     underlying CKEditor5 scrollViewportToShowTarget,
-                    //     which allows to provide a larger "viewportOffset",
-                    //     but that has coding complications (requires calling
-                    //     an internal CKEditor utils funcion and passing an
-                    //     HTML element, not a CKEditor node, and CKEditor5
-                    //     doesn't seem to have a straightforward way to convert
-                    //     a node to an HTML element? (in CKEditor4 this was
-                    //     done with $(node.$) )
-
-                    // Scroll to the end of the note to guarantee the next
-                    // scroll is a backwards scroll that places the caret at the
-                    // top of the screen
-                    model.change(writer => {
-                        writer.setSelection(root.getChild(root.childCount - 1), 0);
-                    });
-                    textEditor.editing.view.scrollToTheSelection();
-                    // Backwards scroll to the heading
-                    model.change(writer => {
-                        writer.setSelection(headingNode, 0);
-                    });
-                    textEditor.editing.view.scrollToTheSelection();
                 });
             });
             $ols[$ols.length - 1].append($li);
-
-            curLevel = newLevel;
-            headingIndex++;
         }
 
         return $toc;
