@@ -193,6 +193,12 @@ class TocWidget extends api.NoteContextAwareWidget {
             // Create the list item and setup the click callback
             //
             let $li = $('<li style="cursor:pointer">' + m[2] + '</li>');
+            // XXX Do this with CSS? How to inject CSS in doRender?
+            $li.hover(function () {
+                $(this).css("font-weight", "bold");
+            }).mouseout(function () {
+                $(this).css("font-weight", "normal");
+            });
             $li.on("click", function () {
                 dbg("clicked");
                 // Check the CSS style for being present and not hidden

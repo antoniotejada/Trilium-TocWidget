@@ -21,4 +21,4 @@ https://github.com/zadam/trilium/discussions/2799
 
 ## Screenshot
 
-![image](https://user-images.githubusercontent.com/6446344/163863508-113fc12f-98f3-47c1-a5a1-5b2b540d7dc7.png)
+![image](https://user-images.githubusercontent.com/6446344/164298494-909a51a7-f4db-4e86-9bea-e602a6508254.png)
