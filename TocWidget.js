@@ -29,7 +29,7 @@ const TEMPLATE = `<div style="padding: 0px; border-top: 1px solid var(--main-bor
  <span class="toc"></span>
 </div>`;
 
-const showDebug = false;
+const showDebug = (api.startNote.getAttribute("label", "debug") != null);
 function dbg(s) {
     if (showDebug) {
         console.debug("TocWidget: " + s);
@@ -45,7 +45,7 @@ function warn(s) {
 }
 
 function assert(e, msg) {
-    console.assert(e, msg);
+    console.assert(e, "TocWidget: " + msg);
 }
 
 function debugbreak() {
@@ -96,11 +96,10 @@ function findHeadingElementByIndex(parent, headingIndex) {
 
         dbg("Inspecting node: " + child.innerHTML);
 
-        // Headings appear as flattened top level children in the DOM
-        // named as "H" plus the level, eg "H2",
-        // "H3", "H2", etc and not nested wrt the heading level. If
-        // a heading node is found, decrement the headingIndex until zero is
-        // reached
+        // Headings appear as flattened top level children in the DOM named as
+        // "H" plus the level, eg "H2", "H3", "H2", etc and not nested wrt the
+        // heading level. If a heading node is found, decrement the headingIndex
+        // until zero is reached
         if (child.tagName.match(/H\d+/) !== null) {
             if (headingIndex == 0) {
                 dbg("Found heading element " + child.tagName);
@@ -111,6 +110,46 @@ function findHeadingElementByIndex(parent, headingIndex) {
         }
     }
     return headingElement;
+}
+
+/**
+* Return the active tab's element containing the HTML element that contains
+* a readonly note's HTML.
+* 
+*/
+function getActiveTabReadOnlyTextElement() {
+    // The note's html is in the following hierarchy
+    //   note-split data-ntx-id=XXXX
+    //    ...
+    //    note-detail-readonly-text component
+    //      <styles>
+    //      note-detail-readonly-text-content
+    //        <html>
+    // Note
+    // 1. the readonly text element is not removed but hidden when readonly is
+    //    toggled without reloading,
+    // 2. There can also be hidden readonly text elements in inactive tabs 
+    // 3. There can be more visible readonly text elements in inactive splits
+
+    const activeNtxId = glob.appContext.tabManager.activeNtxId;
+    const readOnlyTextElement = $(".note-split[data-ntx-id=" + activeNtxId +
+        "] .note-detail-readonly-text-content");
+
+    assert(readOnlyTextElement.length == 1,
+        "Duplicated element found for " + readOnlyTextElement);
+
+    return readOnlyTextElement[0];
+}
+
+function getActiveTabTextEditor(callback) {
+    // Wrapper until this commit is available
+    // https://github.com/zadam/trilium/commit/11578b1bc3dda7f29a91281ec28b5fe6f6c63fef
+    api.getActiveTabTextEditor(function (textEditor) {
+        const textEditorNtxId = textEditor.sourceElement.parentElement.component.noteContext.ntxId;
+        if (glob.appContext.tabManager.activeNtxId == textEditorNtxId) {
+            callback(textEditor);
+        }
+    });
 }
 
 class TocWidget extends api.NoteContextAwareWidget {
@@ -156,6 +195,7 @@ class TocWidget extends api.NoteContextAwareWidget {
      *         the desired position.
      */
     getToc(html) {
+        dbg("getToc");
         // Regular expression for headings <h1>...</h1> using non-greedy
         // matching and backreferences
         let reHeadingTags = /<h(\d+)>(.*?)<\/h\1>/g;
@@ -201,18 +241,11 @@ class TocWidget extends api.NoteContextAwareWidget {
             });
             $li.on("click", function () {
                 dbg("clicked");
-                // Check the CSS style for being present and not hidden
-                // (always editable notes don't have the class, but when toggling
-                // the readonly button, the CSS is added and then visibility toggled
-                // rather than removed)
-                // XXX This could check instead the note readonly attribute?
-                // XXX Accessing the CSS class like this is probably brittle and 
-                //     could change with Trilium versions, is there an api to get
-                //     to this DOM element?
-                let $readonlyNote = $(".note-detail-readonly-text-content");
-                if (($readonlyNote.length > 0) && ($readonlyNote.first().is(":visible"))) {
-                    let parent = $readonlyNote[0];
-                    let headingElement = findHeadingElementByIndex(parent, headingIndex);
+
+                const note = api.getActiveTabNote();
+                if (note.getAttribute("label", "readOnly") != null) {
+                    let readonlyTextElement = getActiveTabReadOnlyTextElement();
+                    let headingElement = findHeadingElementByIndex(readonlyTextElement, headingIndex);
 
                     if (headingElement != null) {
                         headingElement.scrollIntoView();
@@ -220,7 +253,7 @@ class TocWidget extends api.NoteContextAwareWidget {
                         warn("Malformed HTML, unable to navigate, TOC rendering is probably wrong too.");
                     }
                 } else {
-                    api.getActiveTabTextEditor(textEditor => {
+                    getActiveTabTextEditor(textEditor => {
                         const model = textEditor.model;
                         const doc = model.document;
                         const root = doc.getRoot();
@@ -232,36 +265,41 @@ class TocWidget extends api.NoteContextAwareWidget {
                         // navigate (note that the TOC rendering and other TOC
                         // entries' navigation could be wrong too)
                         if (headingNode != null) {
-                            // Setting the selection alone doesn't scroll to the caret,
-                            // needs to be done explicitly and outside of the writer
-                            // change callback so the scroll is guaranteed to happen 
-                            // after the selection is updated.
+                            // Setting the selection alone doesn't scroll to the
+                            // caret, needs to be done explicitly and outside of
+                            // the writer change callback so the scroll is
+                            // guaranteed to happen after the selection is
+                            // updated.
 
-                            // In addition, scrolling to a caret later in the document
-                            // (ie "forward scrolls"), only scrolls barely enough to
-                            // place the caret at the bottom of the screen, which is a
-                            // usability issue, you would like the caret to be placed at
-                            // the top or center of the screen.
-
-                            // To work around that issue, first scroll to the end of the
-                            // document, then scroll to the desired point. This causes
-                            // all the scrolls to be "backward scrolls" no matter the
-                            // current caret position, which places the caret at the top
+                            // In addition, scrolling to a caret later in the
+                            // document (ie "forward scrolls"), only scrolls
+                            // barely enough to place the caret at the bottom of
+                            // the screen, which is a usability issue, you would
+                            // like the caret to be placed at the top or center
                             // of the screen.
 
-                            // XXX This could be fixed in another way by using the
-                            //     underlying CKEditor5 scrollViewportToShowTarget,
-                            //     which allows to provide a larger "viewportOffset",
-                            //     but that has coding complications (requires calling
-                            //     an internal CKEditor utils funcion and passing an
-                            //     HTML element, not a CKEditor node, and CKEditor5
-                            //     doesn't seem to have a straightforward way to convert
-                            //     a node to an HTML element? (in CKEditor4 this was
-                            //     done with $(node.$) )
+                            // To work around that issue, first scroll to the
+                            // end of the document, then scroll to the desired
+                            // point. This causes all the scrolls to be
+                            // "backward scrolls" no matter the current caret
+                            // position, which places the caret at the top of
+                            // the screen.
 
-                            // Scroll to the end of the note to guarantee the next
-                            // scroll is a backwards scroll that places the caret at the
-                            // top of the screen
+                            // XXX This could be fixed in another way by using
+                            //     the underlying CKEditor5
+                            //     scrollViewportToShowTarget, which allows to
+                            //     provide a larger "viewportOffset", but that
+                            //     has coding complications (requires calling an
+                            //     internal CKEditor utils funcion and passing
+                            //     an HTML element, not a CKEditor node, and
+                            //     CKEditor5 doesn't seem to have a
+                            //     straightforward way to convert a node to an
+                            //     HTML element? (in CKEditor4 this was done
+                            //     with $(node.$) )
+
+                            // Scroll to the end of the note to guarantee the
+                            // next scroll is a backwards scroll that places the
+                            // caret at the top of the screen
                             model.change(writer => {
                                 writer.setSelection(root.getChild(root.childCount - 1), 0);
                             });
