@@ -63,8 +63,8 @@ function debugbreak() {
 function findHeadingNodeByIndex(parent, headingIndex) {
     dbg("Finding headingIndex " + headingIndex + " in parent " + parent.name);
     let headingNode = null;
-    for (let i = 0, child = null; i < parent.childCount; ++i) {
-        child = parent.getChild(i);
+    for (let i = 0; i < parent.childCount; ++i) {
+        let child = parent.getChild(i);
 
         dbg("Inspecting node: " + child.name +
             ", attrs: " + Array.from(child.getAttributes()) +
@@ -86,6 +86,31 @@ function findHeadingNodeByIndex(parent, headingIndex) {
     }
 
     return headingNode;
+}
+
+function findHeadingElementByIndex(parent, headingIndex) {
+    dbg("Finding headingIndex " + headingIndex + " in parent " + parent.innerHTML);
+    let headingElement = null;
+    for (let i = 0; i < parent.children.length; ++i) {
+        let child = parent.children[i];
+
+        dbg("Inspecting node: " + child.innerHTML);
+
+        // Headings appear as flattened top level children in the DOM
+        // named as "H" plus the level, eg "H2",
+        // "H3", "H2", etc and not nested wrt the heading level. If
+        // a heading node is found, decrement the headingIndex until zero is
+        // reached
+        if (child.tagName.match(/H\d+/) !== null) {
+            if (headingIndex == 0) {
+                dbg("Found heading element " + child.tagName);
+                headingElement = child;
+                break;
+            }
+            headingIndex--;
+        }
+    }
+    return headingElement;
 }
 
 class TocWidget extends api.NoteContextAwareWidget {
@@ -170,61 +195,81 @@ class TocWidget extends api.NoteContextAwareWidget {
             let $li = $('<li style="cursor:pointer">' + m[2] + '</li>');
             $li.on("click", function () {
                 dbg("clicked");
-                api.getActiveTabTextEditor(textEditor => {
-                    const model = textEditor.model;
-                    const doc = model.document;
-                    const root = doc.getRoot();
+                // Check the CSS style for being present and not hidden
+                // (always editable notes don't have the class, but when toggling
+                // the readonly button, the CSS is added and then visibility toggled
+                // rather than removed)
+                // XXX This could check instead the note readonly attribute?
+                // XXX Accessing the CSS class like this is probably brittle and 
+                //     could change with Trilium versions, is there an api to get
+                //     to this DOM element?
+                let $readonlyNote = $(".note-detail-readonly-text-content");
+                if (($readonlyNote.length > 0) && ($readonlyNote.first().is(":visible"))) {
+                    let parent = $readonlyNote[0];
+                    let headingElement = findHeadingElementByIndex(parent, headingIndex);
 
-                    let headingNode = findHeadingNodeByIndex(root, headingIndex);
-
-                    // headingNode could be null if the html was malformed or
-                    // with headings inside elements, just ignore and don't
-                    // navigate (note that the TOC rendering and other TOC
-                    // entries' navigation could be wrong too)
-                    if (headingNode != null) {
-                        // Setting the selection alone doesn't scroll to the caret,
-                        // needs to be done explicitly and outside of the writer
-                        // change callback so the scroll is guaranteed to happen 
-                        // after the selection is updated.
-
-                        // In addition, scrolling to a caret later in the document
-                        // (ie "forward scrolls"), only scrolls barely enough to
-                        // place the caret at the bottom of the screen, which is a
-                        // usability issue, you would like the caret to be placed at
-                        // the top or center of the screen.
-
-                        // To work around that issue, first scroll to the end of the
-                        // document, then scroll to the desired point. This causes
-                        // all the scrolls to be "backward scrolls" no matter the
-                        // current caret position, which places the caret at the top
-                        // of the screen.
-
-                        // XXX This could be fixed in another way by using the
-                        //     underlying CKEditor5 scrollViewportToShowTarget,
-                        //     which allows to provide a larger "viewportOffset",
-                        //     but that has coding complications (requires calling
-                        //     an internal CKEditor utils funcion and passing an
-                        //     HTML element, not a CKEditor node, and CKEditor5
-                        //     doesn't seem to have a straightforward way to convert
-                        //     a node to an HTML element? (in CKEditor4 this was
-                        //     done with $(node.$) )
-
-                        // Scroll to the end of the note to guarantee the next
-                        // scroll is a backwards scroll that places the caret at the
-                        // top of the screen
-                        model.change(writer => {
-                            writer.setSelection(root.getChild(root.childCount - 1), 0);
-                        });
-                        textEditor.editing.view.scrollToTheSelection();
-                        // Backwards scroll to the heading
-                        model.change(writer => {
-                            writer.setSelection(headingNode, 0);
-                        });
-                        textEditor.editing.view.scrollToTheSelection();
+                    if (headingElement != null) {
+                        headingElement.scrollIntoView();
                     } else {
                         warn("Malformed HTML, unable to navigate, TOC rendering is probably wrong too.");
                     }
-                });
+                } else {
+                    api.getActiveTabTextEditor(textEditor => {
+                        const model = textEditor.model;
+                        const doc = model.document;
+                        const root = doc.getRoot();
+
+                        let headingNode = findHeadingNodeByIndex(root, headingIndex);
+
+                        // headingNode could be null if the html was malformed or
+                        // with headings inside elements, just ignore and don't
+                        // navigate (note that the TOC rendering and other TOC
+                        // entries' navigation could be wrong too)
+                        if (headingNode != null) {
+                            // Setting the selection alone doesn't scroll to the caret,
+                            // needs to be done explicitly and outside of the writer
+                            // change callback so the scroll is guaranteed to happen 
+                            // after the selection is updated.
+
+                            // In addition, scrolling to a caret later in the document
+                            // (ie "forward scrolls"), only scrolls barely enough to
+                            // place the caret at the bottom of the screen, which is a
+                            // usability issue, you would like the caret to be placed at
+                            // the top or center of the screen.
+
+                            // To work around that issue, first scroll to the end of the
+                            // document, then scroll to the desired point. This causes
+                            // all the scrolls to be "backward scrolls" no matter the
+                            // current caret position, which places the caret at the top
+                            // of the screen.
+
+                            // XXX This could be fixed in another way by using the
+                            //     underlying CKEditor5 scrollViewportToShowTarget,
+                            //     which allows to provide a larger "viewportOffset",
+                            //     but that has coding complications (requires calling
+                            //     an internal CKEditor utils funcion and passing an
+                            //     HTML element, not a CKEditor node, and CKEditor5
+                            //     doesn't seem to have a straightforward way to convert
+                            //     a node to an HTML element? (in CKEditor4 this was
+                            //     done with $(node.$) )
+
+                            // Scroll to the end of the note to guarantee the next
+                            // scroll is a backwards scroll that places the caret at the
+                            // top of the screen
+                            model.change(writer => {
+                                writer.setSelection(root.getChild(root.childCount - 1), 0);
+                            });
+                            textEditor.editing.view.scrollToTheSelection();
+                            // Backwards scroll to the heading
+                            model.change(writer => {
+                                writer.setSelection(headingNode, 0);
+                            });
+                            textEditor.editing.view.scrollToTheSelection();
+                        } else {
+                            warn("Malformed HTML, unable to navigate, TOC rendering is probably wrong too.");
+                        }
+                    });
+                }
             });
             $ols[$ols.length - 1].append($li);
         }
