@@ -22,35 +22,59 @@
  * to the wrong heading (although what "right" means in those cases is not
  * clear), but it won't crash.
  *
- * * See https://github.com/zadam/trilium/discussions/2799 for discussions
+ * See https://github.com/zadam/trilium/discussions/2799 for discussions
  */
 
-const TEMPLATE = `<div style="padding: 0px; border-top: 1px solid var(--main-border-color); contain: none; overflow:auto">
+ function getNoteAttributeValue(note, attributeType, attributeName, defaultValue) {
+    let attribute = note.getAttribute(attributeType, attributeName);
+    
+    let attributeValue = (attribute != null) ? attribute.value : defaultValue;
+
+    return attributeValue;
+}
+
+const tocWidgetHeightPct = getNoteAttributeValue(api.startNote, "label", "tocWidgetHeightPct", 30);
+const alwaysShowWidget = (tocWidgetHeightPct > 0);
+const tocWidgetHeightPctCss = alwaysShowWidget ? `height: ${tocWidgetHeightPct}%;` : "";
+
+const TEMPLATE = `<div style="padding: 0px; border-top: 1px solid var(--main-border-color); contain: none; overflow:auto; ${tocWidgetHeightPctCss}">
+    Table of Contents
     <span class="toc"></span>
 </div>`;
 
-const showDebug = (api.startNote.getAttribute("label", "debug") != null);
-function dbg(s) {
-    if (showDebug) {
-        console.debug("TocWidget: " + s);
-    }
+const tag = "TocWidget";
+const debugLevels = ["error", "warn", "info", "log", "debug"];
+const debugLevel = debugLevels.indexOf(getNoteAttributeValue(api.startNote, "label", 
+    "debugLevel", "info"));
+
+let warn = function() {};
+if (debugLevel >= debugLevels.indexOf("warn")) {
+    warn = console.warn.bind(console, tag + ": ");
 }
 
-function info(s) {
-    console.info("TocWidget: " + s);
+let info = function() {};
+if (debugLevel >= debugLevels.indexOf("info")) {
+    info = console.info.bind(console, tag + ": ");
 }
 
-function warn(s) {
-    console.warn("TocWidget: " + s);
+let log = function() {};
+if (debugLevel >= debugLevels.indexOf("log")) {
+    log = console.log.bind(console, tag + ": ");
+}
+
+let dbg = function() {};
+if (debugLevel >= debugLevels.indexOf("debug")) {
+    dbg = console.debug.bind(console, tag + ": ");
 }
 
 function assert(e, msg) {
-    console.assert(e, "TocWidget: " + msg);
+    console.assert(e, tag + ": " + msg);
 }
 
 function debugbreak() {
     debugger;
 }
+
 
 /**
  * Find a heading node in the parent's children given its index.
@@ -61,7 +85,7 @@ function debugbreak() {
  *          found (ie malformed like nested headings, etc)
  */
 function findHeadingNodeByIndex(parent, headingIndex) {
-    dbg("Finding headingIndex " + headingIndex + " in parent " + parent.name);
+    log("Finding headingIndex " + headingIndex + " in parent " + parent.name);
     let headingNode = null;
     for (let i = 0; i < parent.childCount; ++i) {
         let child = parent.getChild(i);
@@ -89,7 +113,7 @@ function findHeadingNodeByIndex(parent, headingIndex) {
 }
 
 function findHeadingElementByIndex(parent, headingIndex) {
-    dbg("Finding headingIndex " + headingIndex + " in parent " + parent.innerHTML);
+    log("Finding headingIndex " + headingIndex + " in parent " + parent.innerHTML);
     let headingElement = null;
     for (let i = 0; i < parent.children.length; ++i) {
         let child = parent.children[i];
@@ -130,6 +154,7 @@ function getActiveTabReadOnlyTextElement() {
     //    toggled without reloading,
     // 2. There can also be hidden readonly text elements in inactive tabs 
     // 3. There can be more visible readonly text elements in inactive splits
+    log("getActiveTabReadOnlyTextElement");
 
     const activeNtxId = glob.appContext.tabManager.activeNtxId;
     const readOnlyTextElement = $(".note-split[data-ntx-id=" + activeNtxId +
@@ -142,6 +167,7 @@ function getActiveTabReadOnlyTextElement() {
 }
 
 function getActiveTabTextEditor(callback) {
+    log("getActiveTabTextEditor");
     // Wrapper until this commit is available
     // https://github.com/zadam/trilium/commit/11578b1bc3dda7f29a91281ec28b5fe6f6c63fef
     api.getActiveTabTextEditor(function (textEditor) {
@@ -154,34 +180,71 @@ function getActiveTabTextEditor(callback) {
 
 class TocWidget extends api.NoteContextAwareWidget {
     get position() {
-        dbg("getPosition");
+        log("getPosition id " + this.note?.noteId + " ntxId " + this.noteContext?.ntxId);
         // higher value means position towards the bottom/right
         return 100;
     }
 
     get parentWidget() {
-        dbg("getParentWidget");
+        log("getParentWidget id " + this.note?.noteId + " ntxId " + this.noteContext?.ntxId);
         return 'left-pane';
     }
 
     isEnabled() {
-        dbg("isEnabled");
+        log("isEnabled id " + this.note?.noteId + " ntxId " + this.noteContext?.ntxId);
         return super.isEnabled()
-            && this.note.type === 'text'
+            && (alwaysShowWidget || (this.note.type === 'text'))
             && !this.note.hasLabel('noTocWidget');
     }
 
     doRender() {
-        dbg("doRender");
+        log("doRender id " + this.note?.noteId);
         this.$widget = $(TEMPLATE);
         this.$toc = this.$widget.find('.toc');
         return this.$widget;
     }
 
+    async noteSwitchedEvent(eventData) {
+        const {noteContext, notePath } = eventData;
+        log("noteSwitchedEvent id " + this.note?.noteId + " ntxId " + this.noteContext?.ntxId + 
+            " to id " + noteContext.note?.noteId + " ntxId " + noteContext.ntxId);
+        return await super.noteSwitchedEvent(eventData);
+    }
+
+    async activeContextChangedEvent(eventData) {
+        const {noteContext} = eventData;
+        log("activeContextChangedEvent id " + this.note?.noteId + " ntxId " + this.noteContext?.ntxId + 
+            " to id " + noteContext.note?.noteId + " ntxId " + noteContext.ntxId);
+        return await super.activeContextChangedEvent(eventData);
+    }
+
+    async noteSwitchedAndActivatedEvent(eventData) {
+        const {noteContext, notePath} = eventData;
+        log("noteSwitchedAndActivatedEvent id " + this.note?.noteId + " ntxId " + this.noteContext?.ntxId + 
+            " to id " + noteContext.note?.noteId + " ntxId " + noteContext.ntxId);
+        return await super.noteSwitchedAndActivatedEvent(eventData);
+    }
+
+    async noteTypeMimeChangedEvent(eventData) {
+        const {noteId} = eventData;
+        log("noteTypeMimeChangedEvent id " + this.note?.noteId + " ntxId " + this.noteContext?.ntxId + 
+            " to id " + noteId);
+        return await super.noteTypeMimeChangedEvent(eventData);
+    }
+
+    async frocaReloadedEvent(eventData) {
+        log("frocaReloadedEvent id " + this.note?.noteId + " ntxId " + this.noteContext?.ntxId);
+        return await super.frocaReloadedEvent(eventData);
+    }
+
     async refreshWithNote(note) {
-        dbg("refreshWithNote");
-        const { content } = await note.getNoteComplement();
-        const toc = this.getToc(content);
+        log("refreshWithNote id " + this.note?.noteId +  " ntxId " + this.noteContext?.ntxId + " with " + note.noteId);
+        let toc = "";
+        // Check for type text unconditionally in case alwaysShowWidget is set
+        if (this.note.type === 'text') {
+            const { content } = await note.getNoteComplement();
+            toc = await this.getToc(content);
+        }
 
         this.$toc.html(toc);
     }
@@ -195,7 +258,7 @@ class TocWidget extends api.NoteContextAwareWidget {
      *         the desired position.
      */
     getToc(html) {
-        dbg("getToc");
+        log("getToc");
         // Regular expression for headings <h1>...</h1> using non-greedy
         // matching and backreferences
         let reHeadingTags = /<h(\d+)>(.*?)<\/h\1>/g;
@@ -207,6 +270,7 @@ class TocWidget extends api.NoteContextAwareWidget {
         // Note heading 2 is the first level Trilium makes available to the note
         let curLevel = 2;
         let $ols = [$toc];
+        let widget = this;
         for (let m = null, headingIndex = 0; ((m = reHeadingTags.exec(html)) !== null);
             ++headingIndex) {
             //
@@ -239,11 +303,16 @@ class TocWidget extends api.NoteContextAwareWidget {
             }).mouseout(function () {
                 $(this).css("font-weight", "normal");
             });
-            $li.on("click", function () {
-                dbg("clicked");
+            $li.on("click", async function () {
+                log("clicked");
+                // A readonly note can change state to "readonly disabled
+                // temporarily" (ie "edit this note" button) without any
+                // intervening events, do the readonly calculation at navigation
+                // time and not at outline creation time
+                // See https://github.com/zadam/trilium/issues/2828
+                const isReadOnly = await widget.noteContext.isReadOnly();
 
-                const note = api.getActiveTabNote();
-                if (note.getAttribute("label", "readOnly") != null) {
+                if (isReadOnly) {
                     let readonlyTextElement = getActiveTabReadOnlyTextElement();
                     let headingElement = findHeadingElementByIndex(readonlyTextElement, headingIndex);
 
@@ -321,13 +390,21 @@ class TocWidget extends api.NoteContextAwareWidget {
         return $toc;
     }
 
-    async entitiesReloadedEvent({ loadResults }) {
-        dbg("entitiesReloadedEvent");
-        if (loadResults.isNoteContentReloaded(this.noteId)) {
-            this.refresh();
-        }
+    async entitiesReloadedEvent(eventData) {
+        const { loadResults } = eventData;
+        log("entitiesReloadedEvent id " + this.note?.noteId + " ntxId " + this.noteContext?.ntxId);
+        // The TOC needs refreshing when 
+        // - the note content changes, which loadResults.isNoteContentReloaded
+        //   reports
+        // - the note readonly/editable changes, which
+        //   loadResults.hasAttributeRelatedChanges reports
+        // - the note type changes and needs to show/hide (eg text to plain
+        //   text), etc which loadResults has no way to find out
+        // so refresh unconditionally
+        // See https://github.com/zadam/trilium/issues/2787#issuecomment-1114027030
+        this.refresh();
     }
 }
 
-info("Creating TocWidget");
+info(`Creating TocWidget debugLevel:${debugLevel} heightPct:${tocWidgetHeightPct}`);
 module.exports = new TocWidget();
