@@ -37,9 +37,9 @@ const tocWidgetHeightPct = getNoteAttributeValue(api.startNote, "label", "tocWid
 const alwaysShowWidget = (tocWidgetHeightPct > 0);
 const tocWidgetHeightPctCss = alwaysShowWidget ? `height: ${tocWidgetHeightPct}%;` : "";
 
-const TEMPLATE = `<div style="padding: 0px; border-top: 1px solid var(--main-border-color); contain: none; overflow:auto; ${tocWidgetHeightPctCss}">
-    Table of Contents
-    <span class="toc"></span>
+const TEMPLATE = `<div class="toc-wrapper" style="padding: 0px; border-top: 1px solid var(--main-border-color); contain: none; overflow:auto; ${tocWidgetHeightPctCss}">
+  <div class="toc-header"><span class="fancytree-custom-icon bx bx-chevrons-down"></span>Table of Contents</div>
+  <span class="toc"></span>
 </div>`;
 
 const tag = "TocWidget";
@@ -178,6 +178,28 @@ function getActiveTabTextEditor(callback) {
     });
 }
 
+function splitToc(){
+  var sizes = [0, 75, 25];
+  const sizesSaved = localStorage.getItem('split-sizes');
+  if(sizesSaved) sizes = JSON.parse(sizesSaved);
+  else localStorage.setItem('split-sizes', JSON.stringify(sizes));
+  const splitInstance = Split(['#left-pane>.component.quick-search','#left-pane>.tree-wrapper.component', '#left-pane>.toc-wrapper.component'], {
+      direction: 'vertical',
+      sizes: sizes,
+      minSize: [50, 100, 25],
+      gutterSize: 5,
+      onDragEnd: (sizes) => localStorage.setItem('split-sizes', JSON.stringify(sizes)),
+  });
+  $('#left-pane .toc-header').click(function(){
+      const sizesSaved = JSON.parse(localStorage.getItem('split-sizes'));
+      const sizesCurrent = splitInstance.getSizes();
+      if(sizesSaved && sizesSaved[2] && sizesCurrent && sizesCurrent[2] && sizesSaved[2] != sizesCurrent[2]) splitInstance.setSizes(sizesSaved);
+      else splitInstance.collapse(2);
+      $(this).find('span').toggleClass(['bx-chevrons-down', 'bx-chevrons-right'])
+  });
+  console.log('binded');
+}
+
 class TocWidget extends api.NoteContextAwareWidget {
     get position() {
         log("getPosition id " + this.note?.noteId + " ntxId " + this.noteContext?.ntxId);
@@ -201,6 +223,7 @@ class TocWidget extends api.NoteContextAwareWidget {
         log("doRender id " + this.note?.noteId);
         this.$widget = $(TEMPLATE);
         this.$toc = this.$widget.find('.toc');
+        setTimeout(splitToc, 1000);
         return this.$widget;
     }
 
