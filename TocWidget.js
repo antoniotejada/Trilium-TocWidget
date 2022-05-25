@@ -37,7 +37,7 @@ const tocWidgetHeightPct = getNoteAttributeValue(api.startNote, "label", "tocWid
 const alwaysShowWidget = (tocWidgetHeightPct > 0);
 const tocWidgetHeightPctCss = alwaysShowWidget ? `height: ${tocWidgetHeightPct}%;` : "";
 
-const TEMPLATE = `<div style="padding: 0px; border-top: 1px solid var(--main-border-color); contain: none; overflow:auto; ${tocWidgetHeightPctCss}">
+const TEMPLATE = `<div class="toc-wrapper" style="padding: 0px; border-top: 1px solid var(--main-border-color); contain: none; overflow:auto; ${tocWidgetHeightPctCss}">
     Table of Contents
     <span class="toc"></span>
 </div>`;
@@ -178,6 +178,15 @@ function getActiveTabTextEditor(callback) {
     });
 }
 
+function splitToc(){
+    return Split(['#left-pane>.tree-wrapper.component', '#left-pane>.toc-wrapper.component'], {
+        direction: 'vertical',
+        sizes: [75, 25],
+        gutterSize: 5,
+    });
+
+}
+
 class TocWidget extends api.NoteContextAwareWidget {
     get position() {
         log("getPosition id " + this.note?.noteId + " ntxId " + this.noteContext?.ntxId);
@@ -201,6 +210,7 @@ class TocWidget extends api.NoteContextAwareWidget {
         log("doRender id " + this.note?.noteId);
         this.$widget = $(TEMPLATE);
         this.$toc = this.$widget.find('.toc');
+        setTimeout(splitToc);
         return this.$widget;
     }
 
